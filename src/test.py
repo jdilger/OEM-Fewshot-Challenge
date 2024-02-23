@@ -154,6 +154,7 @@ def validate(args: argparse.Namespace, val_loader: torch.utils.data.DataLoader, 
                 cv2.imwrite(os.path.join('results/preds', fname + '.png'), pred)
     
     if q_label is None:
+        print('q_label is none son')
         return
           
     base_count, novel_count, sum_base_IoU, sum_novel_IoU = 4 * [0]
@@ -225,3 +226,21 @@ if __name__ == "__main__":
              args=(world_size, args),
              nprocs=world_size,
              join=True)
+    
+    # main 2
+    # --config config/oem.yaml
+    # os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(str(x) for x in args.gpus)
+    # os.environ['OPENBLAS_NUM_THREADS'] = '1'
+    # world_size = len(args.gpus)
+    # distributed = world_size > 1
+    # assert not distributed, 'Testing should not be done in a distributed way'
+    # args.distributed = distributed
+    # args.port = find_free_port()
+    # try:
+    #     mp.set_start_method('spawn')
+    # except RuntimeError:
+    #     pass
+    # mp.spawn(main_worker,
+    #          args=(world_size, args),
+    #          nprocs=world_size,
+    #          join=True)
