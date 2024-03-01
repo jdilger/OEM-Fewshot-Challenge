@@ -20,8 +20,8 @@ B = TypeVar("B")
 def ensure_dir(path):
     if not os.path.isdir(path):
         os.makedirs(path)
-        
-        
+
+
 def main_process(args: argparse.Namespace) -> bool:
     if args.distributed:
         rank = dist.get_rank()
@@ -33,17 +33,15 @@ def main_process(args: argparse.Namespace) -> bool:
         return True
 
 
-def setup(args: argparse.Namespace,
-          rank: int,
-          world_size: int) -> None:
+def setup(args: argparse.Namespace, rank: int, world_size: int) -> None:
     """
     Used for distributed learning
     """
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = str(args.port)
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = str(args.port)
 
     # initialize the process group
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    # dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
 def cleanup() -> None:
@@ -58,6 +56,7 @@ def find_free_port() -> int:
     Used for distributed learning
     """
     import socket
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("", 0))
     port = sock.getsockname()[1]
@@ -77,9 +76,16 @@ def get_next_run_id(args) -> int:
 
 
 def save_model(name, savedir, epoch, model, optimizer):
-    filename = os.path.join(savedir, '{}.pth'.format(name))
-    print(f'Saving checkpoint to: {filename}')
-    torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, filename)
+    filename = os.path.join(savedir, "{}.pth".format(name))
+    print(f"Saving checkpoint to: {filename}")
+    torch.save(
+        {
+            "epoch": epoch,
+            "state_dict": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+        },
+        filename,
+    )
 
 
 def to_one_hot(mask: torch.tensor, num_classes: int) -> torch.tensor:
@@ -92,16 +98,19 @@ def to_one_hot(mask: torch.tensor, num_classes: int) -> torch.tensor:
         one_hot_mask : shape [b, shot, num_class, h, w]
     """
     n_tasks, shot, h, w = mask.size()
-    device = torch.device('cuda:{}'.format(dist.get_rank()))
+    device = torch.device("cuda:{}".format(dist.get_rank()))
     one_hot_mask = torch.zeros(n_tasks, shot, num_classes, h, w, device=device)
     new_mask = mask.unsqueeze(2).clone()
-    new_mask[torch.where(new_mask == 255)] = 0  # Ignore_pixels are anyway filtered out in the losses
+    new_mask[torch.where(new_mask == 255)] = (
+        0  # Ignore_pixels are anyway filtered out in the losses
+    )
     one_hot_mask.scatter_(2, new_mask, 1).long()
     return one_hot_mask
 
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -145,19 +154,26 @@ def resume_random_state(state):
     torch.cuda.set_rng_state_all(state[4])
 
 
-def fast_intersection_and_union(probas: torch.Tensor,
-                                target: torch.Tensor) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
+def fast_intersection_and_union(
+    probas: torch.Tensor, target: torch.Tensor
+) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
     n_task, shots, num_classes, h, w = probas.size()
     H, W = target.size()[-2:]
 
     if (h, w) != (H, W):
-        probas = F.interpolate(probas.view(n_task * shots, num_classes, h, w),
-                               size=(H, W), mode='bilinear', align_corners=True).view(n_task, shots, num_classes, H, W)
+        probas = F.interpolate(
+            probas.view(n_task * shots, num_classes, h, w),
+            size=(H, W),
+            mode="bilinear",
+            align_corners=True,
+        ).view(n_task, shots, num_classes, H, W)
     preds = probas.argmax(2)  # [n_query, shot, H, W]
 
     # Pixels with target == 255 will be set to 0 in to_one_hot, we should ignore them
     valid_pixels = target.unsqueeze(2) != 255
-    target, preds = to_one_hot(target, num_classes), to_one_hot(preds, num_classes)  # [n_task, shot, num_classes, H, W]
+    target, preds = to_one_hot(target, num_classes), to_one_hot(
+        preds, num_classes
+    )  # [n_task, shot, num_classes, H, W]
 
     area_intersection = (preds * target * valid_pixels).sum(dim=(3, 4))
     area_output = (preds * valid_pixels).sum(dim=(3, 4))
@@ -166,8 +182,9 @@ def fast_intersection_and_union(probas: torch.Tensor,
     return area_intersection, area_union, area_target
 
 
-def intersection_and_union(preds: torch.tensor, target: torch.tensor, num_classes: int,
-                           ignore_index=255) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
+def intersection_and_union(
+    preds: torch.tensor, target: torch.tensor, num_classes: int, ignore_index=255
+) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
     """
     inputs:
         preds : shape [H, W]
@@ -179,7 +196,7 @@ def intersection_and_union(preds: torch.tensor, target: torch.tensor, num_classe
         area_union : shape [num_class]
         area_target : shape [num_class]
     """
-    assert (preds.dim() in [1, 2, 3])
+    assert preds.dim() in [1, 2, 3]
     assert preds.shape == target.shape
     preds = preds.view(-1)
     target = target.view(-1)
@@ -188,9 +205,15 @@ def intersection_and_union(preds: torch.tensor, target: torch.tensor, num_classe
 
     # This excludes ignore pixels (255) from the result, because of the max
     # Adding .float() because histc not working with long() on CPU
-    area_intersection = torch.histc(intersection.float(), bins=num_classes, min=0, max=num_classes-1)
-    area_output = torch.histc(preds.float(), bins=num_classes, min=0, max=num_classes-1)
-    area_target = torch.histc(target.float(), bins=num_classes, min=0, max=num_classes-1)
+    area_intersection = torch.histc(
+        intersection.float(), bins=num_classes, min=0, max=num_classes - 1
+    )
+    area_output = torch.histc(
+        preds.float(), bins=num_classes, min=0, max=num_classes - 1
+    )
+    area_target = torch.histc(
+        target.float(), bins=num_classes, min=0, max=num_classes - 1
+    )
     area_union = area_output + area_target - area_intersection
     return area_intersection, area_union, area_target
 
@@ -199,13 +222,15 @@ def compute_wce(one_hot_gt, n_novel):
     n_novel_times_shot, n_classes = one_hot_gt.size()[1:3]
     shot = n_novel_times_shot // n_novel
     wce = torch.ones((1, n_novel_times_shot, n_classes, 1, 1), device=one_hot_gt.device)
-    wce[:, :, 0, :, :] = 0.01 if shot == 1 else 0.15  # Increase relative coef of novel classes if labeled samples are scarce
+    wce[:, :, 0, :, :] = (
+        0.01 if shot == 1 else 0.15
+    )  # Increase relative coef of novel classes if labeled samples are scarce
     return wce
 
 
 def get_cfg(parser):
-    parser.add_argument('--config', type=str, required=True, help='config file')
-    parser.add_argument('--opts', default=None, nargs=argparse.REMAINDER)
+    parser.add_argument("--config", type=str, required=True, help="config file")
+    parser.add_argument("--opts", default=None, nargs=argparse.REMAINDER)
     args = parser.parse_args()
     assert args.config is not None
     cfg = load_cfg_from_cfg_file(args.config)
@@ -299,7 +324,7 @@ def _check_and_coerce_cfg_value_type(replacement, original, key, full_key):
     except Exception:
         pass
 
-    for (from_type, to_type) in casts:
+    for from_type, to_type in casts:
         converted, converted_value = conditional_cast(from_type, to_type)
         if converted:
             return converted_value
@@ -314,10 +339,11 @@ def _check_and_coerce_cfg_value_type(replacement, original, key, full_key):
 
 def load_cfg_from_cfg_file(file: str):
     cfg = {}
-    assert os.path.isfile(file) and file.endswith('.yaml'), \
-        '{} is not a yaml file'.format(file)
+    assert os.path.isfile(file) and file.endswith(
+        ".yaml"
+    ), "{} is not a yaml file".format(file)
 
-    with open(file, 'r') as f:
+    with open(file, "r") as f:
         cfg_from_file = yaml.safe_load(f)
 
     for key in cfg_from_file:
@@ -332,12 +358,10 @@ def merge_cfg_from_list(cfg: CfgNode, cfg_list: List[str]):
     new_cfg = copy.deepcopy(cfg)
     assert len(cfg_list) % 2 == 0, cfg_list
     for full_key, v in zip(cfg_list[0::2], cfg_list[1::2]):
-        subkey = full_key.split('.')[-1]
-        assert subkey in cfg, 'Non-existent key: {}'.format(full_key)
+        subkey = full_key.split(".")[-1]
+        assert subkey in cfg, "Non-existent key: {}".format(full_key)
         value = _decode_cfg_value(v)
-        value = _check_and_coerce_cfg_value_type(
-            value, cfg[subkey], subkey, full_key
-        )
+        value = _check_and_coerce_cfg_value_type(value, cfg[subkey], subkey, full_key)
         setattr(new_cfg, subkey, value)
 
     return new_cfg
