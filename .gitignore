@@ -10,8 +10,9 @@ results/
 *.npy
 *.pth
 *.pt
-# *.png
-
+*.png
+*.tiff
+*.tif
 .DS_Store
 
 # Byte-compiled / optimized / DLL files
